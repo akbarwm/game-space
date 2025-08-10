@@ -1,1 +1,443 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Space Dodger — Single File Game</title>
+<style>
+  :root{
+    --bg:#07102a;
+    --panel: rgba(255,255,255,0.06);
+    --accent: #57e389;
+    --danger: #ff6b6b;
+    --text: #e6f0ff;
+  }
+  html,body{height:100%;margin:0;font-family:Inter,system-ui,Segoe UI,Roboto,Helvetica,Arial;}
+  body{
+    background: radial-gradient(ellipse at 20% 10%, rgba(87,227,137,0.05), transparent 10%),
+                radial-gradient(ellipse at 80% 90%, rgba(255,107,107,0.03), transparent 10%),
+                var(--bg);
+    color:var(--text);
+    display:flex;align-items:center;justify-content:center;padding:20px;
+  }
+  .container{
+    width:100%;max-width:900px;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+    border-radius:12px;padding:18px;box-shadow: 0 8px 30px rgba(2,6,23,0.7);
+  }
+  header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;}
+  h1{font-size:18px;margin:0}
+  .meta{font-size:13px;opacity:0.8}
+  .game-wrap{display:grid;grid-template-columns:1fr 260px;gap:12px;}
+  @media(max-width:800px){ .game-wrap{grid-template-columns:1fr;}}
+  .panel{background:var(--panel);padding:12px;border-radius:10px;min-height:360px;display:flex;flex-direction:column;align-items:center;justify-content:center;}
+  canvas{background:linear-gradient(180deg,#001026 0%, rgba(0,0,0,0.2) 100%);border-radius:8px;width:100%;height:480px;display:block;touch-action:none;}
+  .sidebar{display:flex;flex-direction:column;gap:10px;}
+  .stat{padding:10px;border-radius:8px;background:rgba(255,255,255,0.02);font-size:15px}
+  .controls{display:flex;gap:8px;flex-wrap:wrap}
+  button{background:transparent;border:1px solid rgba(255,255,255,0.08);color:var(--text);padding:8px 10px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.primary{background:linear-gradient(90deg,var(--accent),#2bd1b0);color:#03201a;border:0}
+  .small{font-size:13px;opacity:0.9}
+  .big-score{font-size:28px;font-weight:700;color:var(--accent);text-align:center}
+  .overlay{position:relative}
+  .touch-ctrls{display:none;margin-top:8px;gap:8px}
+  .touch-ctrls button{flex:1;padding:12px}
+  @media(max-width:600px){ .touch-ctrls{display:flex} canvas{height:360px} .game-wrap{grid-template-columns:1fr} .sidebar{order:2} }
+  footer{margin-top:12px;font-size:12px;opacity:0.7;text-align:center}
+  .danger{color:var(--danger);font-weight:700}
+</style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div>
+        <h1>Space Dodger</h1>
+        <div class="meta">Hindari asteroid. Kontrol: ← → atau geser pada layar.</div>
+      </div>
+      <div class="meta">Single-file HTML • No install</div>
+    </header>
 
+    <div class="game-wrap">
+      <div class="panel overlay">
+        <canvas id="game" width="800" height="480"></canvas>
+        <div style="width:100%;display:flex;justify-content:center;margin-top:8px;gap:8px">
+          <button id="leftBtn" aria-label="left">◀</button>
+          <button id="rightBtn" aria-label="right">▶</button>
+          <button id="pauseBtn">Pause</button>
+          <button id="muteBtn">Mute</button>
+        </div>
+        <div class="touch-ctrls">
+          <button id="tLeft">Geser Kiri</button>
+          <button id="tRight">Geser Kanan</button>
+        </div>
+      </div>
+
+      <div class="sidebar">
+        <div class="stat">
+          <div class="small">Score</div>
+          <div id="score" class="big-score">0</div>
+        </div>
+
+        <div class="stat">
+          <div class="small">Highscore</div>
+          <div id="highscore" class="big-score">0</div>
+        </div>
+
+        <div class="stat">
+          <div class="small">Level / Speed</div>
+          <div id="level" class="big-score">1</div>
+        </div>
+
+        <div class="stat">
+          <div class="small">Info</div>
+          <div class="small" style="margin-top:6px">Asteroid akan muncul terus; semakin lama, semakin cepat. Tabrak = Game Over.</div>
+        </div>
+
+        <div style="display:flex;gap:8px">
+          <button id="startBtn" class="primary">Start</button>
+          <button id="restartBtn">Restart</button>
+        </div>
+      </div>
+    </div>
+
+    <footer>Buatan — Space Dodger (single file). Simpan sebagai <code>space-dodger.html</code> lalu buka di browser.</footer>
+  </div>
+
+<script>
+/*
+  Space Dodger — single-file game
+  Controls: Left/Right arrows or on-screen buttons / touch
+  Features: score, highscore (localStorage), pause, mute, responsive
+*/
+
+// ---- Setup canvas ----
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let W = canvas.width, H = canvas.height;
+
+// scale for high-DPI
+function resizeForDPI(){
+  const ratio = window.devicePixelRatio || 1;
+  canvas.width = Math.floor(W * ratio);
+  canvas.height = Math.floor(H * ratio);
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.setTransform(ratio,0,0,ratio,0,0);
+}
+resizeForDPI();
+window.addEventListener('resize', ()=>{}); // keep simple
+
+// ---- Game state ----
+let running = false;
+let paused = false;
+let mute = false;
+let keys = {left:false,right:false};
+let score = 0;
+let highscore = Number(localStorage.getItem('sd_highscore') || 0);
+let level = 1;
+let gameSpeed = 1;
+let lastTime = 0;
+
+// UI elements
+const scoreEl = document.getElementById('score');
+const highEl = document.getElementById('highscore');
+const levelEl = document.getElementById('level');
+highEl.textContent = highscore;
+
+// ---- Player ----
+const player = {
+  x: W/2,
+  y: H - 70,
+  w: 48,
+  h: 64,
+  speed: 6,
+  color: '#57e389'
+};
+
+// ---- Asteroids ----
+let asteroids = [];
+let spawnTimer = 0;
+let spawnInterval = 1000; // ms
+
+function spawnAsteroid(){
+  const size = 18 + Math.random()*40;
+  const x = Math.random() * (W - size - 20) + 10;
+  const speed = 1.2 * (0.8 + Math.random()*1.6) * gameSpeed;
+  asteroids.push({x, y:-size, r: size/2, s: speed, rot: Math.random()*Math.PI});
+}
+
+// ---- Audio (simple beeps) ----
+const audioCtx = (window.AudioContext||window.webkitAudioContext) ? new (window.AudioContext||window.webkitAudioContext)() : null;
+function beep(f=440,d=0.06,vol=0.05){
+  if(mute || !audioCtx) return;
+  const o = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  o.type = 'sine'; o.frequency.value = f;
+  g.gain.value = vol;
+  o.connect(g); g.connect(audioCtx.destination);
+  o.start();
+  o.stop(audioCtx.currentTime + d);
+}
+
+// ---- Drawing helpers ----
+function drawShip(x,y,w,h){
+  // simple triangle + cockpit
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.fillStyle = player.color;
+  ctx.beginPath();
+  ctx.moveTo(0,-h/2);
+  ctx.lineTo(-w/2,h/2);
+  ctx.lineTo(w/2,h/2);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = '#052018';
+  ctx.beginPath();
+  ctx.ellipse(0, -h*0.05, w*0.28, h*0.18, 0, 0, Math.PI*2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawAsteroid(a){
+  ctx.save();
+  ctx.translate(a.x + a.r, a.y + a.r);
+  ctx.rotate(a.rot);
+  ctx.fillStyle = '#bfbfbf';
+  ctx.beginPath();
+  // rough polygon
+  const spikes = 7;
+  for(let i=0;i<spikes;i++){
+    const theta = (Math.PI*2)*i/spikes;
+    const rad = a.r * (0.7 + Math.random()*0.6);
+    const sx = Math.cos(theta)*rad;
+    const sy = Math.sin(theta)*rad;
+    if(i===0) ctx.moveTo(sx,sy); else ctx.lineTo(sx,sy);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function clear(){
+  ctx.clearRect(0,0,W,H);
+}
+
+// ---- Collision ----
+function rectCircleColliding(cx,cy,r,rx,ry,rw,rh){
+  // nearest point on rect to circle center
+  const nearestX = Math.max(rx, Math.min(cx, rx+rw));
+  const nearestY = Math.max(ry, Math.min(cy, ry+rh));
+  const dx = cx - nearestX;
+  const dy = cy - nearestY;
+  return (dx*dx + dy*dy) < (r*r);
+}
+
+// ---- Game loop ----
+function update(dt){
+  if(!running || paused) return;
+
+  // move player
+  if(keys.left) player.x -= player.speed *  (1 + gameSpeed*0.1);
+  if(keys.right) player.x += player.speed * (1 + gameSpeed*0.1);
+  // clamp
+  player.x = Math.max(player.w/2, Math.min(W - player.w/2, player.x));
+
+  // spawn asteroids
+  spawnTimer += dt;
+  const interval = Math.max(350, spawnInterval - level*30);
+  if(spawnTimer > interval){
+    spawnAsteroid();
+    spawnTimer = 0;
+  }
+
+  // update asteroids
+  for(let i = asteroids.length-1; i>=0; i--){
+    const a = asteroids[i];
+    a.y += a.s * dt * 0.06 * (0.9 + level*0.06);
+    a.rot += 0.01 * (0.5 + a.s*0.5);
+    if(a.y - a.r > H) asteroids.splice(i,1);
+    // collision?
+    if(rectCircleColliding(a.x + a.r, a.y + a.r, a.r, player.x - player.w/2, player.y - player.h/2, player.w, player.h)){
+      // hit!
+      running = false;
+      beep(120,0.2,0.12);
+      showGameOver();
+      return;
+    }
+  }
+
+  // score & level progression
+  score += dt * 0.01 * (1 + level*0.15);
+  const newLevel = 1 + Math.floor(score / 100);
+  if(newLevel !== level){
+    level = newLevel;
+    gameSpeed = 1 + level*0.08;
+    beep(800 + Math.random()*200, 0.06, 0.03);
+  }
+  scoreEl.textContent = Math.floor(score);
+  levelEl.textContent = level;
+}
+
+function draw(){
+  clear();
+
+  // stars background
+  for(let i=0;i<120;i++){
+    const x = (i*37) % W;
+    const y = (i*73) % H;
+    ctx.fillStyle = (i%7===0) ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.03)';
+    ctx.fillRect(x, y, 1,1);
+  }
+
+  // draw player
+  drawShip(player.x, player.y, player.w, player.h);
+
+  // draw asteroids
+  asteroids.forEach(a => drawAsteroid(a));
+
+  // HUD small
+  ctx.fillStyle = 'rgba(255,255,255,0.06)';
+  ctx.fillRect(10,10,170,44);
+  ctx.fillStyle = '#fff';
+  ctx.font = '14px sans-serif';
+  ctx.fillText('Score: ' + Math.floor(score), 18, 32);
+}
+
+function loop(ts){
+  if(!lastTime) lastTime = ts;
+  const dt = ts - lastTime;
+  lastTime = ts;
+
+  update(dt);
+  draw();
+
+  if(running) requestAnimationFrame(loop);
+}
+
+// ---- Game controls ----
+document.addEventListener('keydown', e=>{
+  if(e.key === 'ArrowLeft' || e.key === 'a'){ keys.left = true; }
+  if(e.key === 'ArrowRight' || e.key === 'd'){ keys.right = true; }
+  if(e.key === ' '){ togglePause(); }
+});
+document.addEventListener('keyup', e=>{
+  if(e.key === 'ArrowLeft' || e.key === 'a'){ keys.left = false; }
+  if(e.key === 'ArrowRight' || e.key === 'd'){ keys.right = false; }
+});
+
+// on-screen buttons
+document.getElementById('leftBtn').addEventListener('mousedown', ()=>keys.left=true);
+document.getElementById('leftBtn').addEventListener('mouseup', ()=>keys.left=false);
+document.getElementById('leftBtn').addEventListener('touchstart', (e)=>{ e.preventDefault(); keys.left=true; });
+document.getElementById('leftBtn').addEventListener('touchend', (e)=>{ e.preventDefault(); keys.left=false; });
+
+document.getElementById('rightBtn').addEventListener('mousedown', ()=>keys.right=true);
+document.getElementById('rightBtn').addEventListener('mouseup', ()=>keys.right=false);
+document.getElementById('rightBtn').addEventListener('touchstart', (e)=>{ e.preventDefault(); keys.right=true; });
+document.getElementById('rightBtn').addEventListener('touchend', (e)=>{ e.preventDefault(); keys.right=false; });
+
+// touch shortcuts
+document.getElementById('tLeft').addEventListener('touchstart', (e)=>{ e.preventDefault(); keys.left=true; });
+document.getElementById('tLeft').addEventListener('touchend', (e)=>{ e.preventDefault(); keys.left=false; });
+document.getElementById('tRight').addEventListener('touchstart', (e)=>{ e.preventDefault(); keys.right=true; });
+document.getElementById('tRight').addEventListener('touchend', (e)=>{ e.preventDefault(); keys.right=false; });
+
+// start/pause/restart/mute
+document.getElementById('startBtn').addEventListener('click', startGame);
+document.getElementById('restartBtn').addEventListener('click', restartGame);
+document.getElementById('pauseBtn').addEventListener('click', togglePause);
+document.getElementById('muteBtn').addEventListener('click', toggleMute);
+
+function startGame(){
+  if(running) return;
+  // reset minimal state if first start
+  if(!running && score === 0){
+    asteroids = [];
+    spawnTimer = 0;
+    score = 0;
+    level = 1;
+    gameSpeed = 1;
+    player.x = W/2;
+  }
+  running = true;
+  paused = false;
+  lastTime = 0;
+  requestAnimationFrame(loop);
+  beep(880,0.06,0.05);
+}
+
+function restartGame(){
+  running = false;
+  paused = false;
+  asteroids = [];
+  spawnTimer = 0;
+  score = 0;
+  level = 1;
+  gameSpeed = 1;
+  player.x = W/2;
+  scoreEl.textContent = '0';
+  levelEl.textContent = '1';
+  // small delay then start
+  setTimeout(()=>{ startGame(); }, 150);
+}
+
+function togglePause(){
+  paused = !paused;
+  document.getElementById('pauseBtn').textContent = paused ? 'Resume' : 'Pause';
+  if(!paused && running){ lastTime = 0; requestAnimationFrame(loop); }
+}
+
+function toggleMute(){
+  mute = !mute;
+  document.getElementById('muteBtn').textContent = mute ? 'Unmute' : 'Mute';
+}
+
+// ---- Game over ----
+function showGameOver(){
+  // update highscore
+  const s = Math.floor(score);
+  if(s > highscore){
+    highscore = s;
+    localStorage.setItem('sd_highscore', highscore);
+    highEl.textContent = highscore;
+  }
+
+  // overlay message (simple)
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.fillRect(0,0,W,H);
+  ctx.fillStyle = '#fff';
+  ctx.font = '42px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('GAME OVER', W/2, H/2 - 10);
+  ctx.font = '18px sans-serif';
+  ctx.fillText('Score: ' + s + '  •  Highscore: ' + highscore, W/2, H/2 + 26);
+  ctx.font = '14px sans-serif';
+  ctx.fillText('Klik Restart untuk main lagi', W/2, H/2 + 56);
+}
+
+// ---- initial draw ----
+draw();
+
+// ---- Prevent accidental scroll on touch canvas ----
+['touchstart','touchmove','touchend','touchcancel'].forEach(evt=>{
+  canvas.addEventListener(evt, e => { e.preventDefault(); }, {passive:false});
+});
+
+// ---- Click canvas to start if not running ----
+canvas.addEventListener('click', ()=>{
+  if(!running) startGame();
+});
+
+// ---- Simple mobile resize fix ----
+function fitCanvasToContainer(){
+  // try to keep original aspect ratio 800x480
+  const containerWidth = canvas.clientWidth || W;
+  const containerHeight = canvas.clientHeight || H;
+  // we keep canvas internal coordinate fixed (W,H), only CSS scaled earlier
+  // nothing to do here for now
+}
+fitCanvasToContainer();
+
+</script>
+</body>
+</html>
